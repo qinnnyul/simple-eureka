@@ -63,7 +63,6 @@ Mappings:
       HealthCheckTimeoutSeconds: 5
       HealthyThresholdCount: 5
 
-
 Parameters:
   EcsClusterName:
     Type: String
@@ -79,8 +78,8 @@ Parameters:
     Type: CommaDelimitedList
     Description: >
       Specifies the EC2 instance type for your container instances.
-      Defaults to m4.large
-    Default: m4.large
+      Defaults to t2.medium
+    Default: t2.medium
     ConstraintDescription: must be a valid EC2 instance type.
   KeyName:
     Type: String
@@ -95,7 +94,6 @@ Parameters:
       your container instances. If you specify a VPC ID, you must specify a list of
       existing subnets in that VPC. If you do not specify a VPC ID, a new VPC is created
       with atleast 1 subnet.
-#    DEBUGGING
     Default: 'vpc-0cbbd87895dbbfc5b'
     ConstraintDescription: >
       VPC Id must begin with 'vpc-' or leave blank to have a
@@ -139,7 +137,7 @@ Parameters:
     Description: >
       Specifies the number of instances to launch and register to the cluster.
       Defaults to 1.
-    Default: '2'
+    Default: '1'
   IamRoleInstanceProfile:
     Type: String
     Description: >
@@ -205,44 +203,20 @@ Parameters:
     Type: String
     Description: Optional - Specifies the device mapping for the Volume
     Default: '/dev/xvdcz'
-  UseSpot:
-    Type: String
-    Default: 'false'
-  IamSpotFleetRoleArn:
-    Type: String
-    Default: ''
-  SpotPrice:
-    Type: String
-    Default: ''
-  SpotAllocationStrategy:
-    Type: String
-    Default: 'diversified'
-    AllowedValues:
-      - 'lowestPrice'
-      - 'diversified'
   UserData:
     Type: String
   PubAlbSecurityGroup:
     Type: String
     Default: 'sg-0b78f5461294ba90a'
-  PrivateAlbSecurityGroup:
-    Type: String
-    Default: 'sg-0b78f5461294ba90a'
   EcsInstanceSecurityGroup:
     Type: String
     Default: 'sg-0b78f5461294ba90a'
-  IsWindows:
-    Type: String
-    Default: 'false'
   ECSCloudWatchLogGroupRetentionInDays:
     Type: Number
     Default: 14
   ECSCloudWatchLogGroupName:
     Type: String
     Default: 'ECS-LOG-GROUP'
-  privateALBSchema:
-    Type: String
-    Default: 'internal'
   enablePublicApplicationLoadBalancer:
     Type: String
     Default: 'true'
@@ -252,6 +226,9 @@ Parameters:
   enableSpringCloud:
     Type: String
     Default: 'true'
+  enableASG:
+      Type: String
+      Default: 'true'
 
 
 Conditions:
@@ -272,9 +249,7 @@ Conditions:
   CreateSubnet3: !And
     - !Not [!Equals [!Ref SubnetCidr3, '']]
     - !Condition CreateSubnet2
-  CreateWithSpot: !Equals [!Ref UseSpot, 'true']
-  CreateWithASG: !Not [!Condition CreateWithSpot]
-  CreateWithSpotPrice: !Not [!Equals [!Ref SpotPrice, '']]
+  CreateWithASG: !Equals [!Ref enableASG, 'true']
   CreatePublicALB: !Equals [!Ref enablePublicApplicationLoadBalancer, 'true']
   CreateSampleTask: !Equals [!Ref enableSampleTask, 'true']
   CreateSpringCloud: !Equals [!Ref enableSpringCloud, 'true']
@@ -402,40 +377,60 @@ Resources:
           Value: "This instance is the part of the Auto Scaling group which was created through ECS Console"
           PropagateAtLaunch: 'true'
 
-
-  ApplicationLoadBalancer:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Subnets: !Ref SubnetIds
-      Name: !Join [ "-" , [ !Ref EcsClusterName, "alb" ] ]
-      Scheme: !Ref privateALBSchema
-      SecurityGroups: [ !Ref PrivateAlbSecurityGroup ]
-
   PublicApplicationLoadBalancer:
     Condition: CreatePublicALB
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
       Subnets: !Ref PublicSubnetIds
-      Name: !Join [ "-" , [ !Ref EcsClusterName, "pubalb" ] ]
+      Name: !Join [ "-" , [ !Ref EcsClusterName, "pub-alb" ] ]
       Scheme: internet-facing
       SecurityGroups: [ !Ref PubAlbSecurityGroup ]
 
-###############   Spring Cloud Config Server Resources  Start ####################
-  SpringCloudConfigServerALBListener:
+###############   ALB Default Targetgroup ####################
+  DefaultALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Condition: CreateSpringCloud
     Properties:
       DefaultActions:
       - Type: forward
-        TargetGroupArn: !Ref SpringCloudConfigServerTargetGroup
+        TargetGroupArn: !Ref DefaultTargetGroup
       LoadBalancerArn: !Ref PublicApplicationLoadBalancer
-      Port: !FindInMap [ SpringCloudMiddlewares, ConfigServer, port ]
+      Port: 80
       Protocol: HTTP
 
+  DefaultTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: CreateSpringCloud
+    DependsOn: PublicApplicationLoadBalancer
+    Properties:
+      HealthCheckIntervalSeconds: !FindInMap [ SpringCloudMiddlewares, Eureka, HealthCheckIntervalSeconds ]
+      HealthCheckPath: !FindInMap [ SpringCloudMiddlewares, Eureka, HealthCheckPath ]
+      HealthCheckPort: !FindInMap [ SpringCloudMiddlewares, Eureka, HealthCheckPort ]
+      HealthCheckProtocol: !FindInMap [ SpringCloudMiddlewares, Eureka, HealthCheckProtocol ]
+      HealthCheckTimeoutSeconds: !FindInMap [ SpringCloudMiddlewares, Eureka, HealthCheckTimeoutSeconds ]
+      HealthyThresholdCount: !FindInMap [ SpringCloudMiddlewares, Eureka, HealthyThresholdCount ]
+      Matcher:
+        HttpCode: 200
+      Name: default-target-group
+      Port: 80
+      Protocol: HTTP
+      TargetGroupAttributes:
+        -
+          Key: deregistration_delay.timeout_seconds
+          Value: 300
+        -
+          Key: slow_start.duration_seconds
+          Value: 0
+        -
+          Key: stickiness.enabled
+          Value: false
+      VpcId: !Ref VpcId
+
+###############   Spring Cloud Config Server Resources  Start ####################
   SpringCloudConfigServerECSALBListenerRule:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
     Condition: CreateSpringCloud
-    DependsOn: SpringCloudConfigServerALBListener
+    DependsOn: DefaultALBListener
     Properties:
       Actions:
       - Type: forward
@@ -443,7 +438,7 @@ Resources:
       Conditions:
       - Field: path-pattern
         Values: [/simple-config-server*]
-      ListenerArn: !Ref SpringCloudConfigServerALBListener
+      ListenerArn: !Ref DefaultALBListener
       Priority: 1
 
   SpringCloudConfigServerTaskDef:
@@ -489,7 +484,7 @@ Resources:
       Matcher:
         HttpCode: 200
       Name: !FindInMap [ SpringCloudMiddlewares, ConfigServer, name ]
-      Port: !FindInMap [ SpringCloudMiddlewares, ConfigServer, port ]
+      Port: 80
       Protocol: HTTP
       TargetGroupAttributes:
         -
@@ -509,7 +504,7 @@ Resources:
     DependsOn: PublicApplicationLoadBalancer
     DependsOn: SpringCloudConfigServerTargetGroup
     DependsOn: ECSCluster
-    DependsOn: SpringCloudConfigServerALBListener
+    DependsOn: DefaultALBListener
     Properties:
       Cluster: !Ref EcsClusterName
       DeploymentConfiguration:
@@ -529,21 +524,10 @@ Resources:
 
 
 ###############   Spring Cloud  Eureka Server Resources start ####################
-  SpringCloudEurekaALBListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Condition: CreateSpringCloud
-    Properties:
-      DefaultActions:
-      - Type: forward
-        TargetGroupArn: !Ref SpringCloudEurekaTargetGroup
-      LoadBalancerArn: !Ref PublicApplicationLoadBalancer
-      Port: !FindInMap [ SpringCloudMiddlewares, Eureka, port ]
-      Protocol: HTTP
-
   SpringCloudEurekaECSALBListenerRule:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
     Condition: CreateSpringCloud
-    DependsOn: SpringCloudEurekaALBListener
+    DependsOn: DefaultALBListener
     Properties:
       Actions:
       - Type: forward
@@ -551,8 +535,8 @@ Resources:
       Conditions:
       - Field: path-pattern
         Values: [/simple-eureka*]
-      ListenerArn: !Ref SpringCloudEurekaALBListener
-      Priority: 1
+      ListenerArn: !Ref DefaultALBListener
+      Priority: 2
 
   SpringCloudEurekaTaskDef:
     Type: AWS::ECS::TaskDefinition
@@ -598,7 +582,7 @@ Resources:
       Matcher:
         HttpCode: 200
       Name: !FindInMap [ SpringCloudMiddlewares, Eureka, name ]
-      Port: !FindInMap [ SpringCloudMiddlewares, Eureka, port ]
+      Port: 80
       Protocol: HTTP
       TargetGroupAttributes:
         -
@@ -618,7 +602,7 @@ Resources:
     DependsOn: PublicApplicationLoadBalancer
     DependsOn: SpringCloudEurekaTargetGroup
     DependsOn: ECSCluster
-    DependsOn: SpringCloudEurekaALBListener
+    DependsOn: DefaultALBListener
     Properties:
       Cluster: !Ref EcsClusterName
       DeploymentConfiguration:
@@ -638,21 +622,10 @@ Resources:
 
 
 ##############   Spring Cloud  Sample Resources start ####################
-  SpringCloudSampleALBListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Condition: CreateSampleTask
-    Properties:
-      DefaultActions:
-      - Type: forward
-        TargetGroupArn: !Ref SpringCloudSampleTargetGroup
-      LoadBalancerArn: !Ref PublicApplicationLoadBalancer
-      Port: !FindInMap [ SpringCloudMiddlewares, Sample, port ]
-      Protocol: HTTP
-
   SpringCloudSampleECSALBListenerRule:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
     Condition: CreateSampleTask
-    DependsOn: SpringCloudSampleALBListener
+    DependsOn: DefaultALBListener
     Properties:
       Actions:
       - Type: forward
@@ -660,8 +633,8 @@ Resources:
       Conditions:
       - Field: path-pattern
         Values: [/simple-application*]
-      ListenerArn: !Ref SpringCloudSampleALBListener
-      Priority: 1
+      ListenerArn: !Ref DefaultALBListener
+      Priority: 3
 
   SpringCloudSampleTaskDef:
     Type: AWS::ECS::TaskDefinition
@@ -710,7 +683,7 @@ Resources:
       Matcher:
         HttpCode: 200
       Name: !FindInMap [ SpringCloudMiddlewares, Sample, name ]
-      Port: !FindInMap [ SpringCloudMiddlewares, Sample, port ]
+      Port: 80
       Protocol: HTTP
       TargetGroupAttributes:
         -
@@ -730,7 +703,7 @@ Resources:
     DependsOn: PublicApplicationLoadBalancer
     DependsOn: SpringCloudSampleTargetGroup
     DependsOn: ECSCluster
-    DependsOn: SpringCloudSampleALBListener
+    DependsOn: DefaultALBListener
     Properties:
       Cluster: !Ref EcsClusterName
       DeploymentConfiguration:
@@ -773,12 +746,6 @@ Outputs:
     Condition: CreateSampleTask
     Description: URL of Spring Cloud Eureka Server
     Value: !Join [ ":" , [ !GetAtt PublicApplicationLoadBalancer.DNSName, !FindInMap [ SpringCloudMiddlewares, Sample, port ]]]
-  ApplicationLoadBalancer:
-    Description: URL of Application Load Balancer
-    Value: !GetAtt ApplicationLoadBalancer.DNSName
-  ApplicationLoadBalancerArn:
-    Description: Arn of Application Load Balancer
-    Value: !Ref ApplicationLoadBalancer
   PublicApplicationLoadBalancer:
     Condition: CreatePublicALB
     Description: URL of Public Application Load Balancer
