@@ -1,0 +1,796 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  AWS CloudFormation template to create a new
+  ECS Cluster and Spring Cloud Middlewares
+Mappings:
+  AWSRegionToAMI:
+    ap-southeast-1:
+      AMIID: ami-0e28ff4e3f1776d86
+  SpringCloudMiddlewares:
+    ConfigServer:
+      cpu: 256
+      mem: 1024
+      javaopt: "-Xms512m -Xmx1024m -Xss512k"
+      port: 8888
+      name: ConfigServer
+      taskcount: 1
+      minhealthcount: 50
+      maxhealthcount: 200
+      logPrefix: simple-config-server
+      HealthCheckGracePeriodSeconds: 300
+      image: '613175009525.dkr.ecr.ap-southeast-1.amazonaws.com/simple-cluster/simple-config-server:latest'
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /simple-config-server/actuator/info
+      HealthCheckPort: traffic-port
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+    Eureka:
+      cpu: 512
+      mem: 1024
+      javaopt: "-Xms512m -Xmx1024m -Xss512k"
+      image: '613175009525.dkr.ecr.ap-southeast-1.amazonaws.com/simple-cluster/simple-eureka:latest'
+      port: 8761
+      name: Eureka
+      taskcount: 1
+      minhealthcount: 50
+      maxhealthcount: 200
+      logPrefix: simple-eureka-server
+      HealthCheckGracePeriodSeconds: 300
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /simple-eureka/actuator/info
+      HealthCheckPort: traffic-port
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+    Sample:
+      cpu: 512
+      mem: 1024
+      javaopt: "-Xms512m -Xmx1024m -Xss512k"
+      port: 3000
+      hostport: 9050
+      name: Sample
+      taskcount: 1
+      minhealthcount: 50
+      maxhealthcount: 200
+      HealthCheckGracePeriodSeconds: 300
+      logPrefix: simple-application
+      image: '613175009525.dkr.ecr.ap-southeast-1.amazonaws.com/simple-cluster/simple-application:latest'
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /simple-application/actuator/info
+      HealthCheckPort: traffic-port
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+
+
+Parameters:
+  EcsClusterName:
+    Type: String
+    Description: >
+      Specifies the ECS Cluster Name with which the resources would be
+      associated
+    Default: ecsSpringCloud-cluster
+  EcsAmiId:
+    Type: String
+    Description: Specifies the AMI ID for your container instances.
+    Default: ami-0e28ff4e3f1776d86
+  EcsInstanceType:
+    Type: CommaDelimitedList
+    Description: >
+      Specifies the EC2 instance type for your container instances.
+      Defaults to m4.large
+    Default: m4.large
+    ConstraintDescription: must be a valid EC2 instance type.
+  KeyName:
+    Type: String
+    Description: >
+      Optional - Specifies the name of an existing Amazon EC2 key pair
+      to enable SSH access to the EC2 instances in your cluster.
+    Default: 'aws-singapore-key'
+  VpcId:
+    Type: String
+    Description: >
+      Optional - Specifies the ID of an existing VPC in which to launch
+      your container instances. If you specify a VPC ID, you must specify a list of
+      existing subnets in that VPC. If you do not specify a VPC ID, a new VPC is created
+      with atleast 1 subnet.
+#    DEBUGGING
+    Default: 'vpc-0cbbd87895dbbfc5b'
+    ConstraintDescription: >
+      VPC Id must begin with 'vpc-' or leave blank to have a
+      new VPC created
+  SubnetIds:
+    Type: CommaDelimitedList
+    Description: >
+      Optional - Specifies the Comma separated list of existing VPC Subnet
+      Ids where ECS instances will run
+    Default: 'subnet-04ba9eef00aa8b68b,subnet-037a2aaefea93362c'
+  PublicSubnetIds:
+    Type: CommaDelimitedList
+    Description: >
+      Optional - Specifies the Comma separated list of existing VPC Public Subnet
+      Ids where ECS instances will run
+    Default: 'subnet-037a2aaefea93362c,subnet-04ba9eef00aa8b68b'
+  SecurityGroupId:
+    Type: String
+    Description: >
+      Optional - Specifies the Security Group Id of an existing Security
+      Group. Leave blank to have a new Security Group created
+    Default: 'sg-0b78f5461294ba90a'
+  VpcCidr:
+    Type: String
+    Description: Optional - Specifies the CIDR Block of VPC
+    Default: ''
+  SubnetCidr1:
+    Type: String
+    Description: Specifies the CIDR Block of Subnet 1
+    Default: ''
+  SubnetCidr2:
+    Type: String
+    Description: Specifies the CIDR Block of Subnet 2
+    Default: ''
+  SubnetCidr3:
+    Type: String
+    Description: Specifies the CIDR Block of Subnet 3
+    Default: ''
+  AsgMaxSize:
+    Type: Number
+    Description: >
+      Specifies the number of instances to launch and register to the cluster.
+      Defaults to 1.
+    Default: '2'
+  IamRoleInstanceProfile:
+    Type: String
+    Description: >
+      Specifies the Name or the Amazon Resource Name (ARN) of the instance
+      profile associated with the IAM role for the instance
+#    DEBUGGING
+    Default: 'arn:aws:iam::613175009525:instance-profile/simple-cluster-EcsInstanceProfile-1113ZX3U3W4U0'
+  IamRoleECSServiceRole:
+    Type: String
+    Description: >
+      Specifies the Name or the Amazon Resource Name (ARN) of the instance
+      profile associated with the IAM role for the instance
+#    DEBUGGING
+    Default: 'arn:aws:iam::613175009525:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS'
+  SecurityIngressFromPort:
+    Type: Number
+    Description: >
+      Optional - Specifies the Start of Security Group port to open on
+      ECS instances - defaults to port 0
+    Default: '0'
+  SecurityIngressToPort:
+    Type: Number
+    Description: >
+      Optional - Specifies the End of Security Group port to open on ECS
+      instances - defaults to port 65535
+    Default: '65535'
+  SecurityIngressCidrIp:
+    Type: String
+    Description: >
+      Optional - Specifies the CIDR/IP range for Security Ports - defaults
+      to 0.0.0.0/0
+    Default: 0.0.0.0/0
+  EcsEndpoint:
+    Type: String
+    Description: >
+      Optional - Specifies the ECS Endpoint for the ECS Agent to connect to
+    Default: ''
+  VpcAvailabilityZones:
+    Type: CommaDelimitedList
+    Description: >
+      Specifies a comma-separated list of 3 VPC Availability Zones for
+      the creation of new subnets. These zones must have the available status.
+    Default: ''
+  EbsVolumeSize:
+    Type: Number
+    Description: >
+      Optional - Specifies the Size in GBs, of the newly created Amazon
+      Elastic Block Store (Amazon EBS) volume
+    Default: '22'
+  EbsVolumeType:
+    Type: String
+    Description: Optional - Specifies the Type of (Amazon EBS) volume
+    Default: 'gp2'
+    AllowedValues:
+      - ''
+      - standard
+      - io1
+      - gp2
+      - sc1
+      - st1
+    ConstraintDescription: Must be a valid EC2 volume type.
+  DeviceName:
+    Type: String
+    Description: Optional - Specifies the device mapping for the Volume
+    Default: '/dev/xvdcz'
+  UseSpot:
+    Type: String
+    Default: 'false'
+  IamSpotFleetRoleArn:
+    Type: String
+    Default: ''
+  SpotPrice:
+    Type: String
+    Default: ''
+  SpotAllocationStrategy:
+    Type: String
+    Default: 'diversified'
+    AllowedValues:
+      - 'lowestPrice'
+      - 'diversified'
+  UserData:
+    Type: String
+  PubAlbSecurityGroup:
+    Type: String
+    Default: 'sg-0b78f5461294ba90a'
+  PrivateAlbSecurityGroup:
+    Type: String
+    Default: 'sg-0b78f5461294ba90a'
+  EcsInstanceSecurityGroup:
+    Type: String
+    Default: 'sg-0b78f5461294ba90a'
+  IsWindows:
+    Type: String
+    Default: 'false'
+  ECSCloudWatchLogGroupRetentionInDays:
+    Type: Number
+    Default: 14
+  ECSCloudWatchLogGroupName:
+    Type: String
+    Default: 'ECS-LOG-GROUP'
+  privateALBSchema:
+    Type: String
+    Default: 'internal'
+  enablePublicApplicationLoadBalancer:
+    Type: String
+    Default: 'true'
+  enableSampleTask:
+    Type: String
+    Default: 'true'
+  enableSpringCloud:
+    Type: String
+    Default: 'true'
+
+
+Conditions:
+  CreateEC2LCWithKeyPair:
+    !Not [!Equals [!Ref KeyName, '']]
+  SetEndpointToECSAgent:
+    !Not [!Equals [!Ref EcsEndpoint, '']]
+  CreateNewSecurityGroup:
+    !Equals [!Ref SecurityGroupId, '']
+  CreateNewVpc:
+    !Equals [!Ref VpcId, '']
+  CreateSubnet1: !And
+    - !Not [!Equals [!Ref SubnetCidr1, '']]
+    - !Condition CreateNewVpc
+  CreateSubnet2: !And
+    - !Not [!Equals [!Ref SubnetCidr2, '']]
+    - !Condition CreateSubnet1
+  CreateSubnet3: !And
+    - !Not [!Equals [!Ref SubnetCidr3, '']]
+    - !Condition CreateSubnet2
+  CreateWithSpot: !Equals [!Ref UseSpot, 'true']
+  CreateWithASG: !Not [!Condition CreateWithSpot]
+  CreateWithSpotPrice: !Not [!Equals [!Ref SpotPrice, '']]
+  CreatePublicALB: !Equals [!Ref enablePublicApplicationLoadBalancer, 'true']
+  CreateSampleTask: !Equals [!Ref enableSampleTask, 'true']
+  CreateSpringCloud: !Equals [!Ref enableSpringCloud, 'true']
+
+Resources:
+  Vpc:
+    Condition: CreateSubnet1
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+  PubSubnetAz1:
+    Condition: CreateSubnet1
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref SubnetCidr1
+      AvailabilityZone: !Select [ 0, !Ref VpcAvailabilityZones ]
+      MapPublicIpOnLaunch: true
+  PubSubnetAz2:
+    Condition: CreateSubnet2
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref SubnetCidr2
+      AvailabilityZone: !Select [ 1, !Ref VpcAvailabilityZones ]
+      MapPublicIpOnLaunch: true
+  PubSubnetAz3:
+    Condition: CreateSubnet3
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref SubnetCidr3
+      AvailabilityZone: !Select [ 2, !Ref VpcAvailabilityZones ]
+      MapPublicIpOnLaunch: true
+  InternetGateway:
+    Condition: CreateSubnet1
+    Type: AWS::EC2::InternetGateway
+  AttachGateway:
+    Condition: CreateSubnet1
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+  RouteViaIgw:
+    Condition: CreateSubnet1
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+  PublicRouteViaIgw:
+    Condition: CreateSubnet1
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref RouteViaIgw
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PubSubnet1RouteTableAssociation:
+    Condition: CreateSubnet1
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PubSubnetAz1
+      RouteTableId: !Ref RouteViaIgw
+  PubSubnet2RouteTableAssociation:
+    Condition: CreateSubnet2
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PubSubnetAz2
+      RouteTableId: !Ref RouteViaIgw
+  PubSubnet3RouteTableAssociation:
+    Condition: CreateSubnet3
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PubSubnetAz3
+      RouteTableId: !Ref RouteViaIgw
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref EcsClusterName
+
+  EcsInstanceLc:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Condition: CreateWithASG
+    DependsOn: ECSCluster
+    Properties:
+      ImageId: !FindInMap [ AWSRegionToAMI, !Ref "AWS::Region", AMIID ]
+      InstanceType: !Select [ 0, !Ref EcsInstanceType ]
+      AssociatePublicIpAddress: false
+      IamInstanceProfile: !Ref IamRoleInstanceProfile
+      KeyName: !If [ CreateEC2LCWithKeyPair, !Ref KeyName, !Ref "AWS::NoValue" ]
+      SecurityGroups: [ !If [ CreateNewSecurityGroup, !Ref EcsInstanceSecurityGroup, !Ref SecurityGroupId ] ]
+      BlockDeviceMappings:
+      - DeviceName: !Ref DeviceName
+        Ebs:
+         VolumeSize: !Ref EbsVolumeSize
+         VolumeType: !Ref EbsVolumeType
+      UserData:
+        Fn::Base64: !Join [ "", [ "#!/bin/bash\n","echo ECS_CLUSTER=",!Ref EcsClusterName," >> /etc/ecs/ecs.config\n" ] ]
+  EcsInstanceAsg:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: CreateWithASG
+    Properties:
+      VPCZoneIdentifier: !If
+        - CreateSubnet1
+        - !If
+          - CreateSubnet2
+          - !If
+            - CreateSubnet3
+            - [ !Sub "${PubSubnetAz1}, ${PubSubnetAz2}, ${PubSubnetAz3}" ]
+            - [ !Sub "${PubSubnetAz1}, ${PubSubnetAz2}" ]
+          - [ !Sub "${PubSubnetAz1}" ]
+        - !Ref SubnetIds
+      LaunchConfigurationName: !Ref EcsInstanceLc
+      MinSize: '0'
+      MaxSize: !Ref AsgMaxSize
+      DesiredCapacity: !Ref AsgMaxSize
+      Tags:
+        -
+          Key: Name
+          Value: !Sub "ECS Instance - ${AWS::StackName}"
+          PropagateAtLaunch: 'true'
+        -
+          Key: Description
+          Value: "This instance is the part of the Auto Scaling group which was created through ECS Console"
+          PropagateAtLaunch: 'true'
+
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets: !Ref SubnetIds
+      Name: !Join [ "-" , [ !Ref EcsClusterName, "alb" ] ]
+      Scheme: !Ref privateALBSchema
+      SecurityGroups: [ !Ref PrivateAlbSecurityGroup ]
+
+  PublicApplicationLoadBalancer:
+    Condition: CreatePublicALB
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets: !Ref PublicSubnetIds
+      Name: !Join [ "-" , [ !Ref EcsClusterName, "pubalb" ] ]
+      Scheme: internet-facing
+      SecurityGroups: [ !Ref PubAlbSecurityGroup ]
+
+###############   Spring Cloud Config Server Resources  Start ####################
+  SpringCloudConfigServerALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: CreateSpringCloud
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref SpringCloudConfigServerTargetGroup
+      LoadBalancerArn: !Ref PublicApplicationLoadBalancer
+      Port: !FindInMap [ SpringCloudMiddlewares, ConfigServer, port ]
+      Protocol: HTTP
+
+  SpringCloudConfigServerECSALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: CreateSpringCloud
+    DependsOn: SpringCloudConfigServerALBListener
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref SpringCloudConfigServerTargetGroup
+      Conditions:
+      - Field: path-pattern
+        Values: [/simple-config-server*]
+      ListenerArn: !Ref SpringCloudConfigServerALBListener
+      Priority: 1
+
+  SpringCloudConfigServerTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Condition: CreateSpringCloud
+    Properties:
+      Cpu: !FindInMap [ SpringCloudMiddlewares, ConfigServer, cpu ]
+      Family: !FindInMap [ SpringCloudMiddlewares, ConfigServer, name ]
+      Memory: !FindInMap [ SpringCloudMiddlewares, ConfigServer, mem ]
+      ContainerDefinitions:
+        -
+          Name: !FindInMap [ SpringCloudMiddlewares, ConfigServer, name ]
+          Image: !FindInMap [ SpringCloudMiddlewares, ConfigServer, image ]
+          Cpu: !FindInMap [ SpringCloudMiddlewares, ConfigServer, cpu ]
+          PortMappings:
+            -
+              ContainerPort: !FindInMap [ SpringCloudMiddlewares, ConfigServer, port ]
+              HostPort: 0
+          Memory: !FindInMap [ SpringCloudMiddlewares, ConfigServer, mem ]
+          Essential: "true"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ECSCloudWatchLogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: !FindInMap [ SpringCloudMiddlewares, ConfigServer, logPrefix ]
+          Environment:
+            -
+              Name: JAVA_OPTS
+              Value: !FindInMap [ SpringCloudMiddlewares, ConfigServer, javaopt ]
+
+  SpringCloudConfigServerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: CreateSpringCloud
+    DependsOn: PublicApplicationLoadBalancer
+    Properties:
+      HealthCheckIntervalSeconds: !FindInMap [ SpringCloudMiddlewares, ConfigServer, HealthCheckIntervalSeconds ]
+      HealthCheckPath: !FindInMap [ SpringCloudMiddlewares, ConfigServer, HealthCheckPath ]
+      HealthCheckPort: !FindInMap [ SpringCloudMiddlewares, ConfigServer, HealthCheckPort ]
+      HealthCheckProtocol: !FindInMap [ SpringCloudMiddlewares, ConfigServer, HealthCheckProtocol ]
+      HealthCheckTimeoutSeconds: !FindInMap [ SpringCloudMiddlewares, ConfigServer, HealthCheckTimeoutSeconds ]
+      HealthyThresholdCount: !FindInMap [ SpringCloudMiddlewares, ConfigServer, HealthyThresholdCount ]
+      Matcher:
+        HttpCode: 200
+      Name: !FindInMap [ SpringCloudMiddlewares, ConfigServer, name ]
+      Port: !FindInMap [ SpringCloudMiddlewares, ConfigServer, port ]
+      Protocol: HTTP
+      TargetGroupAttributes:
+        -
+          Key: deregistration_delay.timeout_seconds
+          Value: 300
+        -
+          Key: slow_start.duration_seconds
+          Value: 0
+        -
+          Key: stickiness.enabled
+          Value: false
+      VpcId: !Ref VpcId
+
+  SpringCloudConfigServerSvcDef:
+    Type: AWS::ECS::Service
+    Condition: CreateSpringCloud
+    DependsOn: PublicApplicationLoadBalancer
+    DependsOn: SpringCloudConfigServerTargetGroup
+    DependsOn: ECSCluster
+    DependsOn: SpringCloudConfigServerALBListener
+    Properties:
+      Cluster: !Ref EcsClusterName
+      DeploymentConfiguration:
+        MaximumPercent: !FindInMap [ SpringCloudMiddlewares, ConfigServer, maxhealthcount ]
+        MinimumHealthyPercent: !FindInMap [ SpringCloudMiddlewares, ConfigServer, minhealthcount ]
+      DesiredCount: !FindInMap [ SpringCloudMiddlewares, ConfigServer, taskcount ]
+      HealthCheckGracePeriodSeconds: !FindInMap [ SpringCloudMiddlewares, ConfigServer, HealthCheckGracePeriodSeconds ]
+      LoadBalancers:
+        - ContainerName: !FindInMap [ SpringCloudMiddlewares, ConfigServer, name ]
+          ContainerPort: !FindInMap [ SpringCloudMiddlewares, ConfigServer, port ]
+          TargetGroupArn: !Ref SpringCloudConfigServerTargetGroup
+      Role: !Ref IamRoleECSServiceRole
+      ServiceName: !FindInMap [ SpringCloudMiddlewares, ConfigServer, name ]
+      TaskDefinition: !Ref SpringCloudConfigServerTaskDef
+###############   Spring Cloud Config Server Resources  end ####################
+
+
+
+###############   Spring Cloud  Eureka Server Resources start ####################
+  SpringCloudEurekaALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: CreateSpringCloud
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref SpringCloudEurekaTargetGroup
+      LoadBalancerArn: !Ref PublicApplicationLoadBalancer
+      Port: !FindInMap [ SpringCloudMiddlewares, Eureka, port ]
+      Protocol: HTTP
+
+  SpringCloudEurekaECSALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: CreateSpringCloud
+    DependsOn: SpringCloudEurekaALBListener
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref SpringCloudEurekaTargetGroup
+      Conditions:
+      - Field: path-pattern
+        Values: [/simple-eureka*]
+      ListenerArn: !Ref SpringCloudEurekaALBListener
+      Priority: 1
+
+  SpringCloudEurekaTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Condition: CreateSpringCloud
+    DependsOn: PublicApplicationLoadBalancer
+    Properties:
+      Cpu: !FindInMap [ SpringCloudMiddlewares, Eureka, cpu ]
+      Family: !FindInMap [ SpringCloudMiddlewares, Eureka, name ]
+      Memory: !FindInMap [ SpringCloudMiddlewares, Eureka, mem ]
+      ContainerDefinitions:
+        -
+          Name:  !FindInMap [ SpringCloudMiddlewares, Eureka, name ]
+          Image: !FindInMap [ SpringCloudMiddlewares, Eureka, image ]
+          Cpu: !FindInMap [ SpringCloudMiddlewares, Eureka, cpu ]
+          PortMappings:
+            -
+              ContainerPort: !FindInMap [ SpringCloudMiddlewares, Eureka, port ]
+              HostPort: 0
+          Memory: !FindInMap [ SpringCloudMiddlewares, Eureka, mem ]
+          Essential: "true"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ECSCloudWatchLogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: !FindInMap [ SpringCloudMiddlewares, Eureka, logPrefix ]
+          Environment:
+            -
+              Name: JAVA_OPTS
+              Value: !FindInMap [ SpringCloudMiddlewares, Eureka, javaopt ]
+
+  SpringCloudEurekaTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: CreateSpringCloud
+    DependsOn: PublicApplicationLoadBalancer
+    Properties:
+      HealthCheckIntervalSeconds: !FindInMap [ SpringCloudMiddlewares, Eureka, HealthCheckIntervalSeconds ]
+      HealthCheckPath: !FindInMap [ SpringCloudMiddlewares, Eureka, HealthCheckPath ]
+      HealthCheckPort: !FindInMap [ SpringCloudMiddlewares, Eureka, HealthCheckPort ]
+      HealthCheckProtocol: !FindInMap [ SpringCloudMiddlewares, Eureka, HealthCheckProtocol ]
+      HealthCheckTimeoutSeconds: !FindInMap [ SpringCloudMiddlewares, Eureka, HealthCheckTimeoutSeconds ]
+      HealthyThresholdCount: !FindInMap [ SpringCloudMiddlewares, Eureka, HealthyThresholdCount ]
+      Matcher:
+        HttpCode: 200
+      Name: !FindInMap [ SpringCloudMiddlewares, Eureka, name ]
+      Port: !FindInMap [ SpringCloudMiddlewares, Eureka, port ]
+      Protocol: HTTP
+      TargetGroupAttributes:
+        -
+          Key: deregistration_delay.timeout_seconds
+          Value: 300
+        -
+          Key: slow_start.duration_seconds
+          Value: 0
+        -
+          Key: stickiness.enabled
+          Value: false
+      VpcId: !Ref VpcId
+
+  SpringCloudEurekaSvcDef:
+    Type: AWS::ECS::Service
+    Condition: CreateSpringCloud
+    DependsOn: PublicApplicationLoadBalancer
+    DependsOn: SpringCloudEurekaTargetGroup
+    DependsOn: ECSCluster
+    DependsOn: SpringCloudEurekaALBListener
+    Properties:
+      Cluster: !Ref EcsClusterName
+      DeploymentConfiguration:
+        MaximumPercent: !FindInMap [ SpringCloudMiddlewares, Eureka, maxhealthcount ]
+        MinimumHealthyPercent: !FindInMap [ SpringCloudMiddlewares, Eureka, minhealthcount ]
+      DesiredCount: !FindInMap [ SpringCloudMiddlewares, Eureka, taskcount ]
+      HealthCheckGracePeriodSeconds: !FindInMap [ SpringCloudMiddlewares, Eureka, HealthCheckGracePeriodSeconds ]
+      LoadBalancers:
+        - ContainerName: !FindInMap [ SpringCloudMiddlewares, Eureka, name ]
+          ContainerPort: !FindInMap [ SpringCloudMiddlewares, Eureka, port ]
+          TargetGroupArn: !Ref SpringCloudEurekaTargetGroup
+      Role: !Ref IamRoleECSServiceRole
+      ServiceName: !FindInMap [ SpringCloudMiddlewares, Eureka, name ]
+      TaskDefinition: !Ref SpringCloudEurekaTaskDef
+
+###############   Spring Cloud Eureka Server Resources end ####################
+
+
+##############   Spring Cloud  Sample Resources start ####################
+  SpringCloudSampleALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: CreateSampleTask
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref SpringCloudSampleTargetGroup
+      LoadBalancerArn: !Ref PublicApplicationLoadBalancer
+      Port: !FindInMap [ SpringCloudMiddlewares, Sample, port ]
+      Protocol: HTTP
+
+  SpringCloudSampleECSALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: CreateSampleTask
+    DependsOn: SpringCloudSampleALBListener
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref SpringCloudSampleTargetGroup
+      Conditions:
+      - Field: path-pattern
+        Values: [/simple-application*]
+      ListenerArn: !Ref SpringCloudSampleALBListener
+      Priority: 1
+
+  SpringCloudSampleTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Condition: CreateSampleTask
+    DependsOn: PublicApplicationLoadBalancer
+    DependsOn: SpringCloudEurekaSvcDef
+    Properties:
+      Cpu: !FindInMap [ SpringCloudMiddlewares, Sample, cpu ]
+      Family: !FindInMap [ SpringCloudMiddlewares, Sample, name ]
+      Memory: !FindInMap [ SpringCloudMiddlewares, Sample, mem ]
+      ContainerDefinitions:
+        -
+          Name: !FindInMap [ SpringCloudMiddlewares, Sample, name ]
+          Image: !FindInMap [ SpringCloudMiddlewares, Sample, image ]
+
+          Cpu: !FindInMap [ SpringCloudMiddlewares, Sample, cpu ]
+          PortMappings:
+            -
+              ContainerPort: !FindInMap [ SpringCloudMiddlewares, Sample, port ]
+              HostPort: !FindInMap [ SpringCloudMiddlewares, Sample, hostport ]
+          Memory: !FindInMap [ SpringCloudMiddlewares, Sample, mem ]
+          Essential: "true"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ECSCloudWatchLogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: !FindInMap [ SpringCloudMiddlewares, Sample, logPrefix ]
+          Environment:
+            -
+              Name: JAVA_OPTS
+              Value: !FindInMap [ SpringCloudMiddlewares, Sample, javaopt ]
+
+
+  SpringCloudSampleTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: CreateSampleTask
+    DependsOn: PublicApplicationLoadBalancer
+    Properties:
+      HealthCheckIntervalSeconds: !FindInMap [ SpringCloudMiddlewares, Sample, HealthCheckIntervalSeconds ]
+      HealthCheckPath: !FindInMap [ SpringCloudMiddlewares, Sample, HealthCheckPath ]
+      HealthCheckPort: !FindInMap [ SpringCloudMiddlewares, Sample, HealthCheckPort ]
+      HealthCheckProtocol: !FindInMap [ SpringCloudMiddlewares, Sample, HealthCheckProtocol ]
+      HealthCheckTimeoutSeconds: !FindInMap [ SpringCloudMiddlewares, Sample, HealthCheckTimeoutSeconds ]
+      HealthyThresholdCount: !FindInMap [ SpringCloudMiddlewares, Sample, HealthyThresholdCount ]
+      Matcher:
+        HttpCode: 200
+      Name: !FindInMap [ SpringCloudMiddlewares, Sample, name ]
+      Port: !FindInMap [ SpringCloudMiddlewares, Sample, port ]
+      Protocol: HTTP
+      TargetGroupAttributes:
+        -
+          Key: deregistration_delay.timeout_seconds
+          Value: 300
+        -
+          Key: slow_start.duration_seconds
+          Value: 0
+        -
+          Key: stickiness.enabled
+          Value: false
+      VpcId: !Ref VpcId
+
+  SpringCloudSampleSvcDef:
+    Type: AWS::ECS::Service
+    Condition: CreateSampleTask
+    DependsOn: PublicApplicationLoadBalancer
+    DependsOn: SpringCloudSampleTargetGroup
+    DependsOn: ECSCluster
+    DependsOn: SpringCloudSampleALBListener
+    Properties:
+      Cluster: !Ref EcsClusterName
+      DeploymentConfiguration:
+        MaximumPercent: !FindInMap [ SpringCloudMiddlewares, Sample, maxhealthcount ]
+        MinimumHealthyPercent: !FindInMap [ SpringCloudMiddlewares, Sample, minhealthcount ]
+      DesiredCount: !FindInMap [ SpringCloudMiddlewares, Sample, taskcount ]
+      HealthCheckGracePeriodSeconds: !FindInMap [ SpringCloudMiddlewares, Sample, HealthCheckGracePeriodSeconds ]
+      LoadBalancers:
+        - ContainerName: !FindInMap [ SpringCloudMiddlewares, Sample, name ]
+          ContainerPort: !FindInMap [ SpringCloudMiddlewares, Sample, port ]
+          TargetGroupArn: !Ref SpringCloudSampleTargetGroup
+      Role: !Ref IamRoleECSServiceRole
+      ServiceName: !FindInMap [ SpringCloudMiddlewares, Sample, name ]
+      TaskDefinition: !Ref SpringCloudSampleTaskDef
+
+###############   Spring Cloud Sample Resources end ####################
+
+###############  CloudWatchLog  start ####################
+  ECSCloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join [ "-" , [ !Ref EcsClusterName, !Ref ECSCloudWatchLogGroupName]]
+      RetentionInDays: !Ref ECSCloudWatchLogGroupRetentionInDays
+###############  CloudWatchLog  end ####################
+
+
+
+Outputs:
+  EcsInstanceAsgName:
+    Condition: CreateWithASG
+    Description: Auto Scaling Group Name for ECS Instances
+    Value: !Ref EcsInstanceAsg
+  SpringCloudConfigServerURL:
+    Description: URL of Spring Cloud Config Server
+    Value: !Join [ ":" , [ !GetAtt PublicApplicationLoadBalancer.DNSName, !FindInMap [ SpringCloudMiddlewares, ConfigServer, port ]]]
+  SpringCloudEurekaServerURL:
+    Description: URL of Spring Cloud Eureka Server
+    Value: !Join [ ":" , [ !GetAtt PublicApplicationLoadBalancer.DNSName, !FindInMap [ SpringCloudMiddlewares, Eureka, port ]]]
+  SpringCloudSampleURL:
+    Condition: CreateSampleTask
+    Description: URL of Spring Cloud Eureka Server
+    Value: !Join [ ":" , [ !GetAtt PublicApplicationLoadBalancer.DNSName, !FindInMap [ SpringCloudMiddlewares, Sample, port ]]]
+  ApplicationLoadBalancer:
+    Description: URL of Application Load Balancer
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+  ApplicationLoadBalancerArn:
+    Description: Arn of Application Load Balancer
+    Value: !Ref ApplicationLoadBalancer
+  PublicApplicationLoadBalancer:
+    Condition: CreatePublicALB
+    Description: URL of Public Application Load Balancer
+    Value: !GetAtt PublicApplicationLoadBalancer.DNSName
+  PublicApplicationLoadBalancerArn:
+    Condition: CreatePublicALB
+    Description: Arn of Public Application Load Balancer
+    Value: !Ref PublicApplicationLoadBalancer
+  ECSName:
+    Description: Name of ECS Cluster
+    Value: !Ref EcsClusterName
+  ECSLogGroup:
+    Description: LogGroup name of ECS Cluster
+    Value: !Join [ "-" , [ !Ref EcsClusterName, !Ref ECSCloudWatchLogGroupName]]
+
