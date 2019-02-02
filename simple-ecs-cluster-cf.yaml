@@ -12,7 +12,7 @@ Mappings:
       mem: 1024
       javaopt: "-Xms512m -Xmx1024m -Xss512k"
       port: 8888
-      name: ConfigServer
+      name: simple-config-server
       context: /simple-config-server
       taskcount: 1
       minhealthcount: 50
@@ -32,7 +32,7 @@ Mappings:
       javaopt: "-Xms512m -Xmx1024m -Xss512k"
       image: '613175009525.dkr.ecr.ap-southeast-1.amazonaws.com/simple-cluster/simple-eureka:latest'
       port: 8761
-      name: Eureka
+      name: simple-eureka-server
       context: /simple-eureka
       taskcount: 1
       minhealthcount: 50
@@ -51,7 +51,7 @@ Mappings:
       javaopt: "-Xms512m -Xmx1024m -Xss512k"
       port: 3000
       hostport: 9050
-      name: Sample
+      name: simple-sample
       context: /simple-application
       taskcount: 1
       minhealthcount: 50
@@ -204,7 +204,7 @@ Parameters:
     Default: 14
   ECSCloudWatchLogGroupName:
     Type: String
-    Default: 'ECS-LOG-GROUP'
+    Default: 'ECS-CW-LOG-GROUP'
   enablePublicApplicationLoadBalancer:
     Type: String
     Default: 'true'
@@ -458,6 +458,9 @@ Resources:
             -
               Name: EUREKA_URL
               Value: !Join [ "" , [ "http://", !GetAtt PublicApplicationLoadBalancer.DNSName, "/simple-eureka/eureka"]]
+            -
+              Name: SPRING_PROFILES_ACTIVE
+              Value: aws
 
   SpringCloudConfigServerTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
@@ -659,7 +662,9 @@ Resources:
             -
               Name: EUREKA_URL
               Value: !Join [ "" , [ "http://", !GetAtt PublicApplicationLoadBalancer.DNSName, "/simple-eureka/eureka"]]
-
+            -
+              Name: SPRING_PROFILES_ACTIVE
+              Value: aws
 
   SpringCloudSampleTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
