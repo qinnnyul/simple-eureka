@@ -13,6 +13,7 @@ Mappings:
       javaopt: "-Xms512m -Xmx1024m -Xss512k"
       port: 8888
       name: ConfigServer
+      context: /simple-config-server
       taskcount: 1
       minhealthcount: 50
       maxhealthcount: 200
@@ -32,6 +33,7 @@ Mappings:
       image: '613175009525.dkr.ecr.ap-southeast-1.amazonaws.com/simple-cluster/simple-eureka:latest'
       port: 8761
       name: Eureka
+      context: /simple-eureka
       taskcount: 1
       minhealthcount: 50
       maxhealthcount: 200
@@ -50,6 +52,7 @@ Mappings:
       port: 3000
       hostport: 9050
       name: Sample
+      context: /simple-application
       taskcount: 1
       minhealthcount: 50
       maxhealthcount: 200
@@ -69,7 +72,7 @@ Parameters:
     Description: >
       Specifies the ECS Cluster Name with which the resources would be
       associated
-    Default: ecsSpringCloud-cluster
+    Default: simple-ecs-cluster
   EcsAmiId:
     Type: String
     Description: Specifies the AMI ID for your container instances.
@@ -93,7 +96,7 @@ Parameters:
       Optional - Specifies the ID of an existing VPC in which to launch
       your container instances. If you specify a VPC ID, you must specify a list of
       existing subnets in that VPC. If you do not specify a VPC ID, a new VPC is created
-      with atleast 1 subnet.
+      with at least 1 subnet.
     Default: 'vpc-0cbbd87895dbbfc5b'
     ConstraintDescription: >
       VPC Id must begin with 'vpc-' or leave blank to have a
@@ -101,15 +104,9 @@ Parameters:
   SubnetIds:
     Type: CommaDelimitedList
     Description: >
-      Optional - Specifies the Comma separated list of existing VPC Subnet
-      Ids where ECS instances will run
-    Default: 'subnet-04ba9eef00aa8b68b,subnet-037a2aaefea93362c'
-  PublicSubnetIds:
-    Type: CommaDelimitedList
-    Description: >
       Optional - Specifies the Comma separated list of existing VPC Public Subnet
       Ids where ECS instances will run
-    Default: 'subnet-037a2aaefea93362c,subnet-04ba9eef00aa8b68b'
+    Default: 'subnet-04ba9eef00aa8b68b,subnet-037a2aaefea93362c'
   SecurityGroupId:
     Type: String
     Description: >
@@ -143,14 +140,12 @@ Parameters:
     Description: >
       Specifies the Name or the Amazon Resource Name (ARN) of the instance
       profile associated with the IAM role for the instance
-#    DEBUGGING
     Default: 'arn:aws:iam::613175009525:instance-profile/simple-cluster-EcsInstanceProfile-1113ZX3U3W4U0'
   IamRoleECSServiceRole:
     Type: String
     Description: >
       Specifies the Name or the Amazon Resource Name (ARN) of the instance
       profile associated with the IAM role for the instance
-#    DEBUGGING
     Default: 'arn:aws:iam::613175009525:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS'
   SecurityIngressFromPort:
     Type: Number
@@ -170,11 +165,6 @@ Parameters:
       Optional - Specifies the CIDR/IP range for Security Ports - defaults
       to 0.0.0.0/0
     Default: 0.0.0.0/0
-  EcsEndpoint:
-    Type: String
-    Description: >
-      Optional - Specifies the ECS Endpoint for the ECS Agent to connect to
-    Default: ''
   VpcAvailabilityZones:
     Type: CommaDelimitedList
     Description: >
@@ -203,8 +193,6 @@ Parameters:
     Type: String
     Description: Optional - Specifies the device mapping for the Volume
     Default: '/dev/xvdcz'
-  UserData:
-    Type: String
   PubAlbSecurityGroup:
     Type: String
     Default: 'sg-0b78f5461294ba90a'
@@ -227,15 +215,13 @@ Parameters:
     Type: String
     Default: 'true'
   enableASG:
-      Type: String
-      Default: 'true'
+    Type: String
+    Default: 'true'
 
 
 Conditions:
   CreateEC2LCWithKeyPair:
     !Not [!Equals [!Ref KeyName, '']]
-  SetEndpointToECSAgent:
-    !Not [!Equals [!Ref EcsEndpoint, '']]
   CreateNewSecurityGroup:
     !Equals [!Ref SecurityGroupId, '']
   CreateNewVpc:
@@ -381,12 +367,12 @@ Resources:
     Condition: CreatePublicALB
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Subnets: !Ref PublicSubnetIds
+      Subnets: !Ref SubnetIds
       Name: !Join [ "-" , [ !Ref EcsClusterName, "pub-alb" ] ]
       Scheme: internet-facing
       SecurityGroups: [ !Ref PubAlbSecurityGroup ]
 
-###############   ALB Default Targetgroup ####################
+###############   ALB Default Target-Group ####################
   DefaultALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Condition: CreateSpringCloud
@@ -469,6 +455,9 @@ Resources:
             -
               Name: JAVA_OPTS
               Value: !FindInMap [ SpringCloudMiddlewares, ConfigServer, javaopt ]
+            -
+              Name: EUREKA_URL
+              Value: !Join [ "" , [ "http://", !GetAtt PublicApplicationLoadBalancer.DNSName, "/simple-eureka/eureka"]]
 
   SpringCloudConfigServerTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
@@ -621,7 +610,7 @@ Resources:
 ###############   Spring Cloud Eureka Server Resources end ####################
 
 
-##############   Spring Cloud  Sample Resources start ####################
+##############   Spring Cloud Sample Resources start ####################
   SpringCloudSampleECSALBListenerRule:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
     Condition: CreateSampleTask
@@ -667,6 +656,9 @@ Resources:
             -
               Name: JAVA_OPTS
               Value: !FindInMap [ SpringCloudMiddlewares, Sample, javaopt ]
+            -
+              Name: EUREKA_URL
+              Value: !Join [ "" , [ "http://", !GetAtt PublicApplicationLoadBalancer.DNSName, "/simple-eureka/eureka"]]
 
 
   SpringCloudSampleTargetGroup:
@@ -732,32 +724,19 @@ Resources:
 
 
 Outputs:
-  EcsInstanceAsgName:
-    Condition: CreateWithASG
-    Description: Auto Scaling Group Name for ECS Instances
-    Value: !Ref EcsInstanceAsg
-  SpringCloudConfigServerURL:
-    Description: URL of Spring Cloud Config Server
-    Value: !Join [ ":" , [ !GetAtt PublicApplicationLoadBalancer.DNSName, !FindInMap [ SpringCloudMiddlewares, ConfigServer, port ]]]
-  SpringCloudEurekaServerURL:
-    Description: URL of Spring Cloud Eureka Server
-    Value: !Join [ ":" , [ !GetAtt PublicApplicationLoadBalancer.DNSName, !FindInMap [ SpringCloudMiddlewares, Eureka, port ]]]
-  SpringCloudSampleURL:
-    Condition: CreateSampleTask
-    Description: URL of Spring Cloud Eureka Server
-    Value: !Join [ ":" , [ !GetAtt PublicApplicationLoadBalancer.DNSName, !FindInMap [ SpringCloudMiddlewares, Sample, port ]]]
   PublicApplicationLoadBalancer:
     Condition: CreatePublicALB
     Description: URL of Public Application Load Balancer
     Value: !GetAtt PublicApplicationLoadBalancer.DNSName
-  PublicApplicationLoadBalancerArn:
-    Condition: CreatePublicALB
-    Description: Arn of Public Application Load Balancer
-    Value: !Ref PublicApplicationLoadBalancer
-  ECSName:
-    Description: Name of ECS Cluster
-    Value: !Ref EcsClusterName
-  ECSLogGroup:
-    Description: LogGroup name of ECS Cluster
-    Value: !Join [ "-" , [ !Ref EcsClusterName, !Ref ECSCloudWatchLogGroupName]]
+  SpringCloudConfigServerURL:
+    Description: URL of Spring Cloud Config Server
+    Value: !Join [ "" , [ !GetAtt PublicApplicationLoadBalancer.DNSName, !FindInMap [ SpringCloudMiddlewares, ConfigServer, context ]]]
+  SpringCloudEurekaServerURL:
+    Description: URL of Spring Cloud Eureka Server
+    Value: !Join [ "" , [ !GetAtt PublicApplicationLoadBalancer.DNSName, !FindInMap [ SpringCloudMiddlewares, Eureka, context ]]]
+  SpringCloudSampleURL:
+    Condition: CreateSampleTask
+    Description: URL of Spring Sample Application
+    Value: !Join [ "" , [ !GetAtt PublicApplicationLoadBalancer.DNSName, !FindInMap [ SpringCloudMiddlewares, Sample, context ]]]
+
 
