@@ -460,7 +460,7 @@ Resources:
               Value: !Join [ "" , [ "http://", !GetAtt PublicApplicationLoadBalancer.DNSName, "/simple-eureka/eureka"]]
             -
               Name: SPRING_PROFILES_ACTIVE
-              Value: aws
+              Value: native, aws
 
   SpringCloudConfigServerTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
